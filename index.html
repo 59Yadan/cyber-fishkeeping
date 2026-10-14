@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>粒子音乐画板</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #0a0a12;
+      overflow: hidden;
+      font-family: -apple-system, "PingFang SC", sans-serif;
+      cursor: crosshair;
+    }
+    canvas { display: block; }
+    #hud {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      color: rgba(255,255,255,0.75);
+      font-size: 13px;
+      line-height: 1.9;
+      pointer-events: none;
+      text-shadow: 0 0 10px rgba(0,0,0,0.9);
+      z-index: 10;
+    }
+    #hud b { color: #7df9ff; font-weight: 600; }
+    #mode {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #7df9ff;
+      font-size: 15px;
+      letter-spacing: 2px;
+      pointer-events: none;
+      text-shadow: 0 0 20px rgba(125,249,255,0.7);
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div>移动鼠标 → <b>粒子 + 发声</b></div>
+    <div>左键点击 → <b>切换模式</b></div>
+    <div>右键 → <b>清空</b></div>
+    <div>滚轮 → <b>粒子大小</b></div>
+  </div>
+  <div id="mode">模式：星尘</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+
+  <script>
+    // ============ 全局配置 ============
+    const MODES = [
+      { name: '星尘', hue: 190, spread: 3, life: 80,  gravity: 0.02,  sound: 'sine' },
+      { name: '火焰', hue: 25,  spread: 5, life: 50,  gravity: -0.08, sound: 'sawtooth' },
+      { name: '花瓣', hue: 330, spread: 2, life: 140, gravity: 0.05,  sound: 'triangle' },
+      { name: '霓虹', hue: 280, spread: 6, life: 100, gravity: 0,     sound: 'square' }
+    ];
+
+    let particles = [];
+    let currentMode = 0;
+    let particleSize = 6;
+    let synth;
+    let soundReady = false;
+    let lastNoteTime = 0;
+
+    // C 大调音阶（两个八度），X 轴映射到这些频率
+    const SCALE = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25,
+                   587.33, 659.25, 698.46, 783.99];
+
+    // ============ 初始化声音 ============
+    function initSound() {
+      if (soundReady) return;
+      try {
+        synth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: MODES[currentMode].sound },
+          envelope: { attack: 0.02, decay: 0.15, sustain: 0.15, release: 0.5 }
+        }).toDestination();
+        synth.volume.value = -14;
+        soundReady = true;
+      } catch (e) {
+        console.warn('音频初始化失败：', e);
+      }
+    }
+
+    // ============ p5 生命周期 ============
+    function setup() {
+      const cnv = createCanvas(windowWidth, windowHeight);
+      cnv.style('display', 'block');
+      colorMode(HSB, 360, 100, 100, 100);
+      background(0);
+      // 不再这里初始化音频，等用户点击
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      background(0);
+    }
+
+    // ============ 鼠标交互 ============
+    function mouseMoved() {
+      spawnParticles(mouseX, mouseY);
+    }
+
+    function mouseDragged() {
+      spawnParticles(mouseX, mouseY);
+      return false;
+    }
+
+    function mousePressed() {
+      // 用户第一次点击时初始化音频（浏览器要求）
+      initSound();
+
+      if (mouseButton === LEFT) {
+        currentMode = (currentMode + 1) % MODES.length;
+        updateModeDisplay();
+        // 切换时爆一圈粒子做反馈
+        for (let i = 0; i < 40; i++) {
+          particles.push(new Particle(mouseX, mouseY, 1.5));
+        }
+        // 同步音色
+        if (synth) {
+          try { synth.set({ oscillator: { type: MODES[currentMode].sound } }); } catch (e) {}
+        }
+      } else if (mouseButton === RIGHT) {
+        particles = [];
+        background(0);
+      }
+      return false;
+    }
+
+    function mouseWheel(e) {
+      particleSize = constrain(particleSize - e.delta * 0.01, 2, 20);
+      return false;
+    }
+
+    document.addEventListener('contextmenu', e => e.preventDefault());
+
+    function updateModeDisplay() {
+      const el = document.getElementById('mode');
+      el.textContent = '模式：' + MODES[currentMode].name;
+      el.style.opacity = 0;
+      setTimeout(() => el.style.opacity = 1, 100);
+    }
+
+    // ============ 生成粒子 + 发声 ============
+    function spawnParticles(x, y) {
+      for (let i = 0; i < 2; i++) {
+        particles.push(new Particle(x, y, 1));
+      }
+      // 时间节流，避免声音过密
+      const now = millis();
+      if (soundReady && now - lastNoteTime > 100) {
+        playNote(x, y);
+        lastNoteTime = now;
+      }
+    }
+
+    // X 轴 → 音高，Y 轴 → 音量
+    function playNote(x, y) {
+      const idx = Math.floor(map(x, 0, width, 0, SCALE.length));
+      const safeIdx = constrain(idx, 0, SCALE.length - 1);
+      const freq = SCALE[safeIdx];
+      const vel = map(y, 0, height, 0.6, 0.08);
+      try {
+        synth.triggerAttackRelease(freq, '16n', undefined, vel);
+      } catch (e) {}
+    }
+
+    // ============ 粒子类 ============
+    class Particle {
+      constructor(x, y, sizeMul) {
+        const m = MODES[currentMode];
+        this.pos = createVector(x, y);
+        this.vel = p5.Vector.random2D().mult(random(0.5, m.spread));
+        this.life = m.life;
+        this.maxLife = m.life;
+        this.size = random(4, 10 + particleSize) * sizeMul;
+        this.hue = (m.hue + random(-30, 30) + 360) % 360;
+        this.sat = random(70, 100);
+        this.bri = random(85, 100);
+        this.gravity = m.gravity;
+      }
+
+      update() {
+        this.vel.y += this.gravity;
+        this.vel.mult(0.96);
+        this.pos.add(this.vel);
+        this.life--;
+      }
+
+      display() {
+        const alpha = map(this.life, 0, this.maxLife, 0, 100);
+        noStroke();
+        // 外层光晕
+        fill(this.hue, this.sat * 0.6, 100, alpha * 0.25);
+        ellipse(this.pos.x, this.pos.y, this.size * 3);
+        // 内层本体
+        fill(this.hue, this.sat, this.bri, alpha);
+        ellipse(this.pos.x, this.pos.y, this.size);
+      }
+
+      isDead() {
+        return this.life <= 0;
+      }
+    }
+
+    // ============ 主循环 ============
+    function draw() {
+      // 半透明遮罩做拖尾
+      noStroke();
+      fill(0, 0, 0, 15);
+      rect(0, 0, width, height);
+
+      // 绘制粒子
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.update();
+        p.display();
+        if (p.isDead()) particles.splice(i, 1);
+      }
+
+      // 粒子数量上限
+      if (particles.length > 1500) {
+        particles.splice(0, particles.length - 1500);
+      }
+
+      // 鼠标光晕
+      noFill();
+      stroke(190, 100, 100, 100);
+      strokeWeight(2);
+      ellipse(mouseX, mouseY, 40 + sin(frameCount * 0.15) * 8);
+    }
+  </script>
+</body>
+</html>
