@@ -2,98 +2,76 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
-  <title>粒子音乐画板</title>
+  <title>赛博养鱼</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%;
       height: 100%;
-      background: #0a0a12;
+      background: #000;
       overflow: hidden;
-      font-family: -apple-system, "PingFang SC", sans-serif;
       cursor: crosshair;
+      font-family: -apple-system, "PingFang SC", sans-serif;
     }
     canvas { display: block; }
     #hud {
       position: fixed;
       top: 20px;
       left: 20px;
-      color: rgba(255,255,255,0.75);
+      color: rgba(255,255,255,0.6);
       font-size: 13px;
       line-height: 1.9;
       pointer-events: none;
-      text-shadow: 0 0 10px rgba(0,0,0,0.9);
       z-index: 10;
+      text-shadow: 0 0 10px rgba(0,0,0,0.9);
     }
-    #hud b { color: #7df9ff; font-weight: 600; }
-    #mode {
+    #hud b { color: #b18cff; font-weight: 600; }
+    #title {
       position: fixed;
       bottom: 30px;
       left: 50%;
       transform: translateX(-50%);
-      color: #7df9ff;
-      font-size: 15px;
+      color: rgba(177,140,255,0.7);
+      font-size: 14px;
       letter-spacing: 2px;
       pointer-events: none;
-      text-shadow: 0 0 20px rgba(125,249,255,0.7);
       z-index: 10;
+      text-shadow: 0 0 20px rgba(177,140,255,0.6);
     }
   </style>
 </head>
 <body>
   <div id="hud">
-    <div>移动鼠标 → <b>粒子 + 发声</b></div>
-    <div>左键点击 → <b>切换模式</b></div>
-    <div>右键 → <b>清空</b></div>
-    <div>滚轮 → <b>粒子大小</b></div>
+    <div>移动鼠标 → <b>鱼群跟随</b></div>
+    <div>左键点击 → <b>鱼群散开</b></div>
+    <div>右键 → <b>重新聚集</b></div>
   </div>
-  <div id="mode">模式：星尘</div>
+  <div id="title">赛博养鱼 · 鼠标逗鱼</div>
 
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
 
   <script>
-    // ============ 全局配置 ============
-    const MODES = [
-      { name: '星尘', hue: 190, spread: 3, life: 80,  gravity: 0.02,  sound: 'sine' },
-      { name: '火焰', hue: 25,  spread: 5, life: 50,  gravity: -0.08, sound: 'sawtooth' },
-      { name: '花瓣', hue: 330, spread: 2, life: 140, gravity: 0.05,  sound: 'triangle' },
-      { name: '霓虹', hue: 280, spread: 6, life: 100, gravity: 0,     sound: 'square' }
-    ];
+    // ============ 配置 ============
+    const FISH_COUNT = 40;      // 鱼的数量
+    const MAX_SPEED = 3.5;      // 最大游速
+    const MAX_FORCE = 0.15;     // 转向力上限
+    const PERCEPTION = 80;      // 感知半径（邻居距离）
+    const SEPARATION = 40;      // 分离距离
 
-    let particles = [];
-    let currentMode = 0;
-    let particleSize = 6;
-    let synth;
-    let soundReady = false;
-    let lastNoteTime = 0;
+    let fishes = [];
+    let mouseTarget;
+    let scareMode = false;      // 是否处于"惊吓散开"状态
+    let scareTimer = 0;
 
-    // C 大调音阶（两个八度），X 轴映射到这些频率
-    const SCALE = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25,
-                   587.33, 659.25, 698.46, 783.99];
-
-    // ============ 初始化声音 ============
-    function initSound() {
-      if (soundReady) return;
-      try {
-        synth = new Tone.PolySynth(Tone.Synth, {
-          oscillator: { type: MODES[currentMode].sound },
-          envelope: { attack: 0.02, decay: 0.15, sustain: 0.15, release: 0.5 }
-        }).toDestination();
-        synth.volume.value = -14;
-        soundReady = true;
-      } catch (e) {
-        console.warn('音频初始化失败：', e);
-      }
-    }
-
-    // ============ p5 生命周期 ============
+    // ============ 初始化 ============
     function setup() {
-      const cnv = createCanvas(windowWidth, windowHeight);
-      cnv.style('display', 'block');
+      createCanvas(windowWidth, windowHeight);
       colorMode(HSB, 360, 100, 100, 100);
       background(0);
-      // 不再这里初始化音频，等用户点击
+      mouseTarget = createVector(width / 2, height / 2);
+      for (let i = 0; i < FISH_COUNT; i++) {
+        fishes.push(new Fish(random(width), random(height)));
+      }
     }
 
     function windowResized() {
@@ -103,137 +81,194 @@
 
     // ============ 鼠标交互 ============
     function mouseMoved() {
-      spawnParticles(mouseX, mouseY);
+      mouseTarget.set(mouseX, mouseY);
     }
 
     function mouseDragged() {
-      spawnParticles(mouseX, mouseY);
+      mouseTarget.set(mouseX, mouseY);
       return false;
     }
 
     function mousePressed() {
-      // 用户第一次点击时初始化音频（浏览器要求）
-      initSound();
-
       if (mouseButton === LEFT) {
-        currentMode = (currentMode + 1) % MODES.length;
-        updateModeDisplay();
-        // 切换时爆一圈粒子做反馈
-        for (let i = 0; i < 40; i++) {
-          particles.push(new Particle(mouseX, mouseY, 1.5));
-        }
-        // 同步音色
-        if (synth) {
-          try { synth.set({ oscillator: { type: MODES[currentMode].sound } }); } catch (e) {}
+        // 惊吓：给每条鱼一个远离鼠标的冲量
+        scareMode = true;
+        scareTimer = 30;
+        for (let f of fishes) {
+          const d = p5.Vector.sub(f.pos, createVector(mouseX, mouseY));
+          d.setMag(8);
+          f.vel.add(d);
         }
       } else if (mouseButton === RIGHT) {
-        particles = [];
-        background(0);
+        // 右键：回到跟随模式
+        scareMode = false;
       }
-      return false;
-    }
-
-    function mouseWheel(e) {
-      particleSize = constrain(particleSize - e.delta * 0.01, 2, 20);
       return false;
     }
 
     document.addEventListener('contextmenu', e => e.preventDefault());
 
-    function updateModeDisplay() {
-      const el = document.getElementById('mode');
-      el.textContent = '模式：' + MODES[currentMode].name;
-      el.style.opacity = 0;
-      setTimeout(() => el.style.opacity = 1, 100);
-    }
-
-    // ============ 生成粒子 + 发声 ============
-    function spawnParticles(x, y) {
-      for (let i = 0; i < 2; i++) {
-        particles.push(new Particle(x, y, 1));
-      }
-      // 时间节流，避免声音过密
-      const now = millis();
-      if (soundReady && now - lastNoteTime > 100) {
-        playNote(x, y);
-        lastNoteTime = now;
-      }
-    }
-
-    // X 轴 → 音高，Y 轴 → 音量
-    function playNote(x, y) {
-      const idx = Math.floor(map(x, 0, width, 0, SCALE.length));
-      const safeIdx = constrain(idx, 0, SCALE.length - 1);
-      const freq = SCALE[safeIdx];
-      const vel = map(y, 0, height, 0.6, 0.08);
-      try {
-        synth.triggerAttackRelease(freq, '16n', undefined, vel);
-      } catch (e) {}
-    }
-
-    // ============ 粒子类 ============
-    class Particle {
-      constructor(x, y, sizeMul) {
-        const m = MODES[currentMode];
+    // ============ 鱼 ============
+    class Fish {
+      constructor(x, y) {
         this.pos = createVector(x, y);
-        this.vel = p5.Vector.random2D().mult(random(0.5, m.spread));
-        this.life = m.life;
-        this.maxLife = m.life;
-        this.size = random(4, 10 + particleSize) * sizeMul;
-        this.hue = (m.hue + random(-30, 30) + 360) % 360;
-        this.sat = random(70, 100);
-        this.bri = random(85, 100);
-        this.gravity = m.gravity;
+        this.vel = p5.Vector.random2D().mult(random(1, 3));
+        this.acc = createVector(0, 0);
+        // 每条鱼有自己的颜色相位，让鱼群颜色渐变不一
+        this.hueOffset = random(-20, 20);
+        // 尾巴摆动相位
+        this.tailPhase = random(TWO_PI);
+        this.tailSpeed = random(0.15, 0.25);
+        // 鱼的大小
+        this.size = random(12, 20);
+      }
+
+      // 三个基本行为力
+      flock(others) {
+        let sep = createVector(0, 0);
+        let ali = createVector(0, 0);
+        let coh = createVector(0, 0);
+        let sepCount = 0, aliCount = 0, cohCount = 0;
+
+        for (let other of others) {
+          if (other === this) continue;
+          const d = p5.Vector.dist(this.pos, other.pos);
+          if (d > 0 && d < PERCEPTION) {
+            // 分离
+            if (d < SEPARATION) {
+              const diff = p5.Vector.sub(this.pos, other.pos);
+              diff.div(d);
+              sep.add(diff);
+              sepCount++;
+            }
+            // 对齐
+            ali.add(other.vel);
+            aliCount++;
+            // 聚合
+            coh.add(other.pos);
+            cohCount++;
+          }
+        }
+
+        if (sepCount > 0) {
+          sep.div(sepCount);
+          sep.setMag(MAX_SPEED);
+          sep.sub(this.vel);
+          sep.limit(MAX_FORCE * 2.5);
+        }
+        if (aliCount > 0) {
+          ali.div(aliCount);
+          ali.setMag(MAX_SPEED);
+          ali.sub(this.vel);
+          ali.limit(MAX_FORCE);
+        }
+        if (cohCount > 0) {
+          coh.div(cohCount);
+          coh.sub(this.pos);
+          coh.setMag(MAX_SPEED);
+          coh.sub(this.vel);
+          coh.limit(MAX_FORCE);
+        }
+
+        this.acc.add(sep.mult(1.8));
+        this.acc.add(ali.mult(1.0));
+        this.acc.add(coh.mult(0.9));
+      }
+
+      // 追随鼠标
+      followTarget() {
+        if (scareMode) return;
+        const desired = p5.Vector.sub(mouseTarget, this.pos);
+        const d = desired.mag();
+        if (d > 5) {
+          desired.setMag(MAX_SPEED);
+          const steer = p5.Vector.sub(desired, this.vel);
+          steer.limit(MAX_FORCE * 1.2);
+          this.acc.add(steer);
+        }
       }
 
       update() {
-        this.vel.y += this.gravity;
-        this.vel.mult(0.96);
+        this.vel.add(this.acc);
+        this.vel.limit(MAX_SPEED);
         this.pos.add(this.vel);
-        this.life--;
+        this.acc.mult(0);
+
+        // 尾巴摆动
+        this.tailPhase += this.tailSpeed;
+
+        // 边界处理：穿墙（从另一边出现）
+        if (this.pos.x < -30) this.pos.x = width + 30;
+        if (this.pos.x > width + 30) this.pos.x = -30;
+        if (this.pos.y < -30) this.pos.y = height + 30;
+        if (this.pos.y > height + 30) this.pos.y = -30;
       }
 
       display() {
-        const alpha = map(this.life, 0, this.maxLife, 0, 100);
+        // 朝向由速度决定
+        const angle = this.vel.heading();
+        // 颜色：蓝紫粉渐变，随时间缓慢漂移
+        const hue = (260 + this.hueOffset + frameCount * 0.3) % 360;
+
+        push();
+        translate(this.pos.x, this.pos.y);
+        rotate(angle);
+
+        // 鱼身（椭圆）+ 光晕
         noStroke();
         // 外层光晕
-        fill(this.hue, this.sat * 0.6, 100, alpha * 0.25);
-        ellipse(this.pos.x, this.pos.y, this.size * 3);
-        // 内层本体
-        fill(this.hue, this.sat, this.bri, alpha);
-        ellipse(this.pos.x, this.pos.y, this.size);
-      }
+        fill(hue, 80, 100, 15);
+        ellipse(0, 0, this.size * 2.2, this.size * 1.2);
+        // 鱼身
+        fill(hue, 70, 95, 55);
+        ellipse(0, 0, this.size * 1.8, this.size);
 
-      isDead() {
-        return this.life <= 0;
+        // 尾巴（三角形，摆动）
+        const tailSwing = sin(this.tailPhase) * 0.5;
+        push();
+        translate(-this.size * 0.9, 0);
+        rotate(tailSwing);
+        fill(hue, 80, 100, 60);
+        triangle(0, 0, -this.size * 0.8, -this.size * 0.5, -this.size * 0.8, this.size * 0.5);
+        pop();
+
+        // 眼睛（小白点）
+        fill(0, 0, 100, 70);
+        ellipse(this.size * 0.5, -this.size * 0.15, 2.5, 2.5);
+
+        pop();
       }
     }
 
     // ============ 主循环 ============
     function draw() {
-      // 半透明遮罩做拖尾
+      // 半透明遮罩 → 拖尾效果
       noStroke();
-      fill(0, 0, 0, 15);
+      fill(0, 0, 0, 12);
       rect(0, 0, width, height);
 
-      // 绘制粒子
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.update();
-        p.display();
-        if (p.isDead()) particles.splice(i, 1);
+      // 惊吓计时衰减
+      if (scareMode) {
+        scareTimer--;
+        if (scareTimer <= 0) scareMode = false;
       }
 
-      // 粒子数量上限
-      if (particles.length > 1500) {
-        particles.splice(0, particles.length - 1500);
+      // 更新所有鱼
+      for (let f of fishes) {
+        f.flock(fishes);
+        f.followTarget();
+        f.update();
+        f.display();
       }
 
-      // 鼠标光晕
+      // 鼠标位置的光点（吸引源可视化）
       noFill();
-      stroke(190, 100, 100, 100);
-      strokeWeight(2);
-      ellipse(mouseX, mouseY, 40 + sin(frameCount * 0.15) * 8);
+      stroke(280, 80, 100, 30);
+      strokeWeight(1.5);
+      ellipse(mouseX, mouseY, 50 + sin(frameCount * 0.1) * 8);
+      fill(280, 80, 100, 15);
+      noStroke();
+      ellipse(mouseX, mouseY, 20);
     }
   </script>
 </body>
