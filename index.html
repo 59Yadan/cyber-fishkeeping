@@ -8,7 +8,7 @@
     html, body {
       width: 100%;
       height: 100%;
-      background: #000;
+      background: #0b1224;
       overflow: hidden;
       cursor: crosshair;
       font-family: -apple-system, "PingFang SC", sans-serif;
@@ -25,18 +25,17 @@
       z-index: 10;
       text-shadow: 0 0 10px rgba(0,0,0,0.9);
     }
-    #hud b { color: #b18cff; font-weight: 600; }
+    #hud b { color: #ffb088; font-weight: 600; }
     #title {
       position: fixed;
       bottom: 30px;
       left: 50%;
       transform: translateX(-50%);
-      color: rgba(177,140,255,0.7);
+      color: rgba(255,255,255,0.5);
       font-size: 14px;
       letter-spacing: 2px;
       pointer-events: none;
       z-index: 10;
-      text-shadow: 0 0 20px rgba(177,140,255,0.6);
     }
   </style>
 </head>
@@ -44,7 +43,7 @@
   <div id="hud">
     <div>移动鼠标 → <b>鱼群跟随</b></div>
     <div>左键点击 → <b>鱼群散开</b></div>
-    <div>右键 → <b>重新聚集</b></div>
+    <div>右键 → <b>水波纹 + 散开</b></div>
   </div>
   <div id="title">赛博养鱼 · 鼠标逗鱼</div>
 
@@ -52,46 +51,65 @@
 
   <script>
     // ============ 配置 ============
-    const FISH_COUNT = 40;      // 鱼的数量
-    const MAX_SPEED = 3.5;      // 最大游速
-    const MAX_FORCE = 0.15;     // 转向力上限
-    const PERCEPTION = 80;      // 感知半径（邻居距离）
-    const SEPARATION = 40;      // 分离距离
+    const FISH_COUNT = 40;
+    const MAX_SPEED = 3.5;
+    const MAX_FORCE = 0.15;
+    const PERCEPTION = 80;
+    const SEPARATION = 40;
+
+    const COLOR_SCHEMES = [
+      { name: '橙红', baseHue: 25,  hueRange: 20 },
+      { name: '蓝色', baseHue: 210, hueRange: 25 },
+      { name: '黄色', baseHue: 50,  hueRange: 18 },
+      { name: '绿色', baseHue: 140, hueRange: 25 },
+      { name: '紫色', baseHue: 280, hueRange: 25 },
+      { name: '粉色', baseHue: 330, hueRange: 20 }
+    ];
+
+    // ★ 切换节奏
+    const HOLD_DURATION = 3000;      // 每个色系保持 3 秒
+    const TRANSITION_DURATION = 1500; // 过渡持续 1.5 秒
+
+    let currentScheme = 0;
+    let nextScheme = 1;
+    let phaseStartTime = 0;
+    let transitionProgress = 0; // 0=完全用current, 1=完全用next
 
     let fishes = [];
+    let ripples = [];
     let mouseTarget;
-    let scareMode = false;      // 是否处于"惊吓散开"状态
+    let scareMode = false;
     let scareTimer = 0;
 
     // ============ 初始化 ============
     function setup() {
       createCanvas(windowWidth, windowHeight);
       colorMode(HSB, 360, 100, 100, 100);
-      background(0);
+      background(220, 60, 12);
       mouseTarget = createVector(width / 2, height / 2);
       for (let i = 0; i < FISH_COUNT; i++) {
         fishes.push(new Fish(random(width), random(height)));
       }
+      phaseStartTime = millis();
     }
 
     function windowResized() {
       resizeCanvas(windowWidth, windowHeight);
-      background(0);
+      background(220, 60, 12);
+    }
+
+    // ★ 色相插值：走最短路径
+    function lerpHue(a, b, t) {
+      let diff = ((b - a + 540) % 360) - 180; // 范围 -180 ~ 180
+      return (a + diff * t + 360) % 360;
     }
 
     // ============ 鼠标交互 ============
-    function mouseMoved() {
-      mouseTarget.set(mouseX, mouseY);
-    }
-
-    function mouseDragged() {
-      mouseTarget.set(mouseX, mouseY);
-      return false;
-    }
+    function mouseMoved() { mouseTarget.set(mouseX, mouseY); }
+    function mouseDragged() { mouseTarget.set(mouseX, mouseY); return false; }
 
     function mousePressed() {
       if (mouseButton === LEFT) {
-        // 惊吓：给每条鱼一个远离鼠标的冲量
         scareMode = true;
         scareTimer = 30;
         for (let f of fishes) {
@@ -100,8 +118,14 @@
           f.vel.add(d);
         }
       } else if (mouseButton === RIGHT) {
-        // 右键：回到跟随模式
-        scareMode = false;
+        scareMode = true;
+        scareTimer = 40;
+        for (let f of fishes) {
+          const d = p5.Vector.sub(f.pos, createVector(mouseX, mouseY));
+          d.setMag(10);
+          f.vel.add(d);
+        }
+        ripples.push(new Ripple(mouseX, mouseY));
       }
       return false;
     }
@@ -114,16 +138,34 @@
         this.pos = createVector(x, y);
         this.vel = p5.Vector.random2D().mult(random(1, 3));
         this.acc = createVector(0, 0);
-        // 每条鱼有自己的颜色相位，让鱼群颜色渐变不一
-        this.hueOffset = random(-20, 20);
-        // 尾巴摆动相位
+
+        this.hueOffset = random(-1, 1);
+
+        const sizeRand = random();
+        this.size = map(sizeRand * sizeRand, 0, 1, 7, 26);
+
         this.tailPhase = random(TWO_PI);
-        this.tailSpeed = random(0.15, 0.25);
-        // 鱼的大小
-        this.size = random(12, 20);
+        this.tailSpeed = random(0.15, 0.28);
+        this.wigglePhase = random(TWO_PI);
       }
 
-      // 三个基本行为力
+      // ★ 色相基于过渡进度插值
+      getHue() {
+        const from = COLOR_SCHEMES[currentScheme];
+        const to = COLOR_SCHEMES[nextScheme];
+
+        // 各自算出本鱼在两个色系下的色相
+        const hFrom = from.baseHue + this.hueOffset * from.hueRange;
+        const hTo = to.baseHue + this.hueOffset * to.hueRange;
+
+        // 用最短路径插值
+        let h = lerpHue(hFrom, hTo, transitionProgress);
+
+        // 呼吸微调
+        const breath = sin(frameCount * 0.01 + this.hueOffset * 10) * 5;
+        return (h + breath + 360) % 360;
+      }
+
       flock(others) {
         let sep = createVector(0, 0);
         let ali = createVector(0, 0);
@@ -134,17 +176,14 @@
           if (other === this) continue;
           const d = p5.Vector.dist(this.pos, other.pos);
           if (d > 0 && d < PERCEPTION) {
-            // 分离
             if (d < SEPARATION) {
               const diff = p5.Vector.sub(this.pos, other.pos);
               diff.div(d);
               sep.add(diff);
               sepCount++;
             }
-            // 对齐
             ali.add(other.vel);
             aliCount++;
-            // 聚合
             coh.add(other.pos);
             cohCount++;
           }
@@ -175,7 +214,6 @@
         this.acc.add(coh.mult(0.9));
       }
 
-      // 追随鼠标
       followTarget() {
         if (scareMode) return;
         const desired = p5.Vector.sub(mouseTarget, this.pos);
@@ -194,66 +232,127 @@
         this.pos.add(this.vel);
         this.acc.mult(0);
 
-        // 尾巴摆动
         this.tailPhase += this.tailSpeed;
+        this.wigglePhase += this.tailSpeed * 0.8;
 
-        // 边界处理：穿墙（从另一边出现）
-        if (this.pos.x < -30) this.pos.x = width + 30;
-        if (this.pos.x > width + 30) this.pos.x = -30;
-        if (this.pos.y < -30) this.pos.y = height + 30;
-        if (this.pos.y > height + 30) this.pos.y = -30;
+        if (this.pos.x < -40) this.pos.x = width + 40;
+        if (this.pos.x > width + 40) this.pos.x = -40;
+        if (this.pos.y < -40) this.pos.y = height + 40;
+        if (this.pos.y > height + 40) this.pos.y = -40;
       }
 
       display() {
-        // 朝向由速度决定
         const angle = this.vel.heading();
-        // 颜色：蓝紫粉渐变，随时间缓慢漂移
-        const hue = (260 + this.hueOffset + frameCount * 0.3) % 360;
+        const hue = this.getHue();
+        const sat = 60;
 
         push();
         translate(this.pos.x, this.pos.y);
         rotate(angle);
 
-        // 鱼身（椭圆）+ 光晕
         noStroke();
-        // 外层光晕
-        fill(hue, 80, 100, 15);
-        ellipse(0, 0, this.size * 2.2, this.size * 1.2);
-        // 鱼身
-        fill(hue, 70, 95, 55);
-        ellipse(0, 0, this.size * 1.8, this.size);
+        for (let i = 2; i >= 1; i--) {
+          fill(hue, sat, 100, 4);
+          ellipse(0, 0, this.size * (1.8 + i * 1.0), this.size * (0.9 + i * 0.5));
+        }
 
-        // 尾巴（三角形，摆动）
-        const tailSwing = sin(this.tailPhase) * 0.5;
+        push();
+        fill(hue, sat, 95, 80);
+        beginShape();
+        vertex(this.size * 1.1, 0);
+        bezierVertex(this.size * 0.6, -this.size * 0.55,
+                     -this.size * 0.2, -this.size * 0.65,
+                     -this.size * 0.7, -this.size * 0.25);
+        vertex(-this.size * 0.9, 0);
+        bezierVertex(-this.size * 0.7, this.size * 0.25,
+                     -this.size * 0.2, this.size * 0.65,
+                     this.size * 0.6, this.size * 0.55);
+        endShape(CLOSE);
+        pop();
+
+        fill(hue, 25, 100, 35);
+        ellipse(this.size * 0.1, -this.size * 0.15, this.size * 0.9, this.size * 0.35);
+
+        const tailSwing = sin(this.tailPhase) * 0.6;
         push();
         translate(-this.size * 0.9, 0);
         rotate(tailSwing);
-        fill(hue, 80, 100, 60);
-        triangle(0, 0, -this.size * 0.8, -this.size * 0.5, -this.size * 0.8, this.size * 0.5);
+        fill(hue, sat, 95, 70);
+        beginShape();
+        vertex(0, 0);
+        vertex(-this.size * 1.1, -this.size * 0.75);
+        vertex(-this.size * 0.7, 0);
+        vertex(-this.size * 1.1, this.size * 0.75);
+        endShape(CLOSE);
         pop();
 
-        // 眼睛（小白点）
-        fill(0, 0, 100, 70);
-        ellipse(this.size * 0.5, -this.size * 0.15, 2.5, 2.5);
+        const wiggle = sin(this.wigglePhase) * 0.3;
+        push();
+        translate(this.size * 0.1, this.size * 0.3);
+        rotate(wiggle);
+        fill(hue, sat, 95, 55);
+        triangle(0, 0, -this.size * 0.3, this.size * 0.5, this.size * 0.15, this.size * 0.2);
+        pop();
+
+        fill(0, 0, 100, 80);
+        ellipse(this.size * 0.6, -this.size * 0.1, 2, 2);
 
         pop();
       }
     }
 
+    // ============ 水波纹 ============
+    class Ripple {
+      constructor(x, y) {
+        this.pos = createVector(x, y);
+        this.radius = 0;
+        this.maxRadius = random(200, 280);
+        this.life = 100;
+        this.speed = 1.8;
+      }
+      update() {
+        this.radius += this.speed;
+        this.life -= 100 / (this.maxRadius / this.speed);
+      }
+      display() {
+        const alpha = map(this.life, 0, 100, 0, 70);
+        noFill();
+        stroke(0, 0, 100, alpha);
+        strokeWeight(1.5);
+        ellipse(this.pos.x, this.pos.y, this.radius * 2);
+      }
+      isDead() { return this.life <= 0; }
+    }
+
     // ============ 主循环 ============
     function draw() {
-      // 半透明遮罩 → 拖尾效果
       noStroke();
-      fill(0, 0, 0, 12);
+      fill(220, 60, 12, 15);
       rect(0, 0, width, height);
 
-      // 惊吓计时衰减
+      // ★ 色系过渡状态机
+      const now = millis();
+      const elapsed = now - phaseStartTime;
+
+      if (elapsed < TRANSITION_DURATION) {
+        // 过渡阶段：0 → 1
+        transitionProgress = elapsed / TRANSITION_DURATION;
+      } else if (elapsed < TRANSITION_DURATION + HOLD_DURATION) {
+        // 保持阶段：完全用 next 色系
+        transitionProgress = 1;
+      } else {
+        // 进入下一个周期：当前色系变成 next，next 再往后推
+        currentScheme = nextScheme;
+        nextScheme = (nextScheme + 1) % COLOR_SCHEMES.length;
+        phaseStartTime = now;
+        transitionProgress = 0;
+      }
+
       if (scareMode) {
         scareTimer--;
         if (scareTimer <= 0) scareMode = false;
       }
 
-      // 更新所有鱼
       for (let f of fishes) {
         f.flock(fishes);
         f.followTarget();
@@ -261,14 +360,17 @@
         f.display();
       }
 
-      // 鼠标位置的光点（吸引源可视化）
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const r = ripples[i];
+        r.update();
+        r.display();
+        if (r.isDead()) ripples.splice(i, 1);
+      }
+
       noFill();
-      stroke(280, 80, 100, 30);
+      stroke(25, 60, 100, 30);
       strokeWeight(1.5);
       ellipse(mouseX, mouseY, 50 + sin(frameCount * 0.1) * 8);
-      fill(280, 80, 100, 15);
-      noStroke();
-      ellipse(mouseX, mouseY, 20);
     }
   </script>
 </body>
