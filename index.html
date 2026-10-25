@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Cyber Fishkeeping</title>
@@ -13,26 +13,60 @@
     }
     canvas { display: block; }
     
+    /* 左侧主标题 */
     #title-container {
-      position: fixed; top: 50%; left: 5vw; transform: translateY(-50%);
-      pointer-events: none; z-index: 10;
+      position: fixed; 
+      top: 50%; 
+      left: 5vw; 
+      transform: translateY(-50%);
+      pointer-events: none; 
+      z-index: 10;
       color: rgba(240, 240, 240, 0.9);
     }
-    #title-main { font-size: 6vw; line-height: 0.85; font-weight: 500; letter-spacing: 0.02em; }
+    #title-main {
+      font-size: 6vw;
+      line-height: 0.85;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
     #title-sub {
-      font-size: 4.5vw; line-height: 1;
-      font-style: italic; font-weight: 300;
+      font-size: 4.5vw;
+      line-height: 1;
+      font-style: italic;
+      font-weight: 300;
       color: transparent; 
       -webkit-text-stroke: 1px rgba(240, 240, 240, 0.7); 
-      margin-left: 0.2vw; letter-spacing: 0.05em;
+      margin-left: 0.2vw;
+      letter-spacing: 0.05em;
     }
     
+    /* 左下角操作提示 */
+    #instructions {
+      position: fixed;
+      left: 5vw;
+      bottom: 5vh;
+      color: rgba(255, 255, 255, 0.35); 
+      font-family: -apple-system, "PingFang SC", sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      line-height: 2;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* 居中的音频开启提示 */
     #audio-hint {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      color: rgba(255,255,255,0.9); font-size: 16px; letter-spacing: 2px;
-      background: rgba(0,0,0,0.6); padding: 15px 30px; border-radius: 30px;
-      pointer-events: none; z-index: 20; transition: opacity 1s;
-      border: 1px solid rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.8); 
+      font-size: 13px; 
+      letter-spacing: 0.2em;
+      background: rgba(0,0,0,0.4); 
+      padding: 15px 30px; 
+      border-radius: 30px;
+      pointer-events: none; 
+      z-index: 20; 
+      transition: opacity 1s;
+      border: 1px solid rgba(255,255,255,0.15);
       font-family: -apple-system, "PingFang SC", sans-serif;
     }
   </style>
@@ -43,7 +77,13 @@
     <div id="title-sub">FISHKEEPING</div>
   </div>
 
-  <div id="audio-hint">点击任意位置开启治愈音效 🎵</div>
+  <div id="instructions">
+    <div>MOVE MOUSE &nbsp;·&nbsp; GUIDE FISH</div>
+    <div>LEFT CLICK &nbsp;·&nbsp; FEED</div>
+    <div>RIGHT CLICK &nbsp;·&nbsp; SCATTER</div>
+  </div>
+
+  <div id="audio-hint">CLICK ANYWHERE TO ENABLE AUDIO</div>
 
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
@@ -67,12 +107,11 @@
     let phaseStartTime = 0;
     let fishes = [];
     let ripples = [];
-    let foods = []; // ★ 新增：饲料数组
+    let foods = []; 
     let mouseTarget;
     let scareMode = false;
     let scareTimer = 0;
 
-    // 音频
     let audioStarted = false;
     let padSynth, pluckSynth;
     let lastPluckTime = 0;
@@ -83,6 +122,7 @@
     function setup() {
       createCanvas(windowWidth, windowHeight);
       colorMode(RGB, 255); 
+      frameRate(60); // 稳定帧率防崩溃
       background(0, 0, 0);
       
       mouseTarget = createVector(width / 2, height / 2);
@@ -154,12 +194,12 @@
       lastClickTime = now;
 
       if (mouseButton === LEFT) {
-        // ★ 左键：生成几颗饲料
+        // 左键：喂食
         for (let i = 0; i < 6; i++) {
           foods.push(new Food(mouseX, mouseY));
         }
       } else if (mouseButton === RIGHT) {
-        // ★ 右键：惊吓散开 + 水波纹（保持不变）
+        // 右键：惊吓散开 + 水波纹
         scareMode = true; scareTimer = 40;
         for (let f of fishes) {
           const d = p5.Vector.sub(f.pos, createVector(mouseX, mouseY));
@@ -172,28 +212,23 @@
     }
     document.addEventListener('contextmenu', e => e.preventDefault());
 
-    // ★ 新增：饲料类
     class Food {
       constructor(x, y) {
         this.pos = createVector(x + random(-30, 30), y + random(-30, 30));
-        this.vel = createVector(random(-0.5, 0.5), random(0.2, 0.8)); // 缓慢下沉
-        this.size = random(2, 4); // 颗粒大小
+        this.vel = createVector(random(-0.5, 0.5), random(0.2, 0.8)); 
+        this.size = random(2, 4); 
         this.isEaten = false;
       }
       update() {
         this.pos.add(this.vel);
-        // 轻微的水中阻力
-        this.vel.mult(0.99);
-        // 沉底
-        if (this.pos.y > height + 20) {
-          this.isEaten = true; 
-        }
+        this.vel.mult(0.99); 
+        if (this.pos.y > height + 20) this.isEaten = true; 
       }
       display() {
         push();
         translate(this.pos.x, this.pos.y);
         noStroke();
-        fill(255, 255, 255, 200); // 白色颗粒
+        fill(255, 255, 255, 200); 
         ellipse(0, 0, this.size);
         pop();
       }
@@ -279,9 +314,8 @@
       }
 
       followTarget() {
-        if (scareMode) return; // 如果处于惊吓状态，不追踪鼠标
+        if (scareMode) return;
         
-        // ★ 喂食逻辑：优先寻找最近的饲料
         let target = null;
         let minDist = Infinity;
         
@@ -294,18 +328,15 @@
           }
         }
 
-        // 如果附近有饲料，就游向饲料；否则游向鼠标
         if (target !== null && minDist < 600) {
           const desired = p5.Vector.sub(target, this.pos);
-          // 离得很近时减速，避免吃不到
           if (desired.mag() > 2) {
-            desired.setMag(MAX_SPEED * 1.2); // 看到吃的游快点
+            desired.setMag(MAX_SPEED * 1.2); 
             const steer = p5.Vector.sub(desired, this.vel);
             steer.limit(MAX_FORCE * 1.5);
             this.acc.add(steer);
           }
         } else {
-          // 默认追踪鼠标
           const desired = p5.Vector.sub(mouseTarget, this.pos);
           if (desired.mag() > 5) {
             desired.setMag(MAX_SPEED);
@@ -421,27 +452,23 @@
 
       if (scareMode) { scareTimer--; if (scareTimer <= 0) scareMode = false; }
 
-      // 更新鱼群物理
       for (let f of fishes) { f.flock(fishes); f.followTarget(); f.update(); f.display(); }
 
-      // 更新并绘制饲料
       for (let i = foods.length - 1; i >= 0; i--) {
         let f = foods[i];
         f.update();
         
-        // 检测鱼是否吃掉饲料
         for (let fish of fishes) {
-          // 如果鱼头（鱼前端）碰到饲料
           if (p5.Vector.dist(fish.pos, f.pos) < fish.size * 0.8) {
             f.isEaten = true;
-            break; // 这颗饲料被吃了，跳出循环
+            break;
           }
         }
         
         if (f.isEaten) {
-          foods.splice(i, 1); // 移除饲料
+          foods.splice(i, 1);
         } else {
-          f.display(); // 绘制饲料
+          f.display(); 
         }
       }
 
