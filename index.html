@@ -1,7 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#000000">
   <title>Cyber Fishkeeping</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -9,6 +11,7 @@
       width: 100%; height: 100%;
       background: #000000;
       overflow: hidden; cursor: crosshair;
+      touch-action: manipulation;
       font-family: "Times New Roman", Times, serif;
     }
     canvas { display: block; }
@@ -43,6 +46,37 @@
       border: 1px solid rgba(255,255,255,0.15);
       font-family: -apple-system, "PingFang SC", sans-serif;
     }
+
+    .topbar { 
+      position: fixed; top: 22px; right: 26px; z-index: 30; 
+      display: flex; gap: 9px; flex-wrap: wrap; justify-content: flex-end; 
+      max-width: 75vw; font: 11px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; 
+    }
+    .pill, .action { 
+      color: rgba(232,247,255,.9); background: rgba(9,29,46,.48); 
+      border: 1px solid rgba(184,225,255,.22); border-radius: 999px; 
+      padding: 10px 14px; backdrop-filter: blur(14px); 
+    }
+    .action { cursor: pointer; transition: .25s ease; }
+    .action:hover { background: rgba(117,190,220,.22); transform: translateY(-1px); }
+    
+    #toast { 
+      position: fixed; left: 50%; bottom: 8vh; transform: translate(-50%, 12px); 
+      z-index: 25; opacity: 0; pointer-events: none; transition: .3s; 
+      background: rgba(7,25,40,.7); border: 1px solid rgba(200,235,255,.22); 
+      border-radius: 30px; padding: 10px 18px; color: #effaff; 
+      font: 12px -apple-system,sans-serif; backdrop-filter: blur(12px); white-space: nowrap; 
+    }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    @media(max-width: 650px) {
+      #title-container { top: 19%; left: 7vw; transform: none; }
+      #title-main { font-size: 13vw; }
+      #title-sub { font-size: 7vw; }
+      .topbar { top: auto; bottom: 16px; left: 10px; right: 10px; max-width: none; justify-content: center; }
+      .pill { display: none; }
+      #instructions { bottom: 82px; left: 7vw; }
+    }
   </style>
 </head>
 <body>
@@ -59,6 +93,12 @@
 
   <div id="audio-hint">CLICK ANYWHERE TO ENABLE AUDIO</div>
 
+  <div class="topbar">
+    <div class="pill" id="fish-count">FISH · 40</div>
+    <button class="action" id="music-toggle" type="button">♫ MUSIC ON</button>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
 
@@ -74,7 +114,6 @@
       [ { r: 94,  g: 50,  b: 99  }, { r: 106, g: 126, b: 187 }, { r: 253, g: 254, b: 204 } ],
       [ { r: 39,  g: 34,  b: 120 }, { r: 105, g: 141, b: 204 }, { r: 255, g: 207, b: 228 } ]
     ];
-
     const HOLD_DURATION = 4000;       
     const TRANSITION_DURATION = 3000; 
 
@@ -83,22 +122,30 @@
     let ripples = [];
     let foods = []; 
     let bubbles = []; 
+    let plants = []; 
     let mouseTarget;
     let scareMode = false;
     let scareTimer = 0;
 
     let audioStarted = false;
+    let musicEnabled = true;
     let padSynth, pluckSynth;
     let lastPluckTime = 0;
-    const PENTATONIC = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25];
-    
     let lastClickTime = 0;
+    let toastTimer = null;
+    const PENTATONIC = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25];
+    const MAX_FOOD = 90, MAX_BUBBLES = 180, MAX_RIPPLES = 24;
+
+    let trailCanvas; // 专门用来画拖尾的画布
 
     function setup() {
       createCanvas(windowWidth, windowHeight);
+      pixelDensity(1);
       colorMode(RGB, 255); 
       frameRate(60); 
       background(0, 0, 0);
+      
+      trailCanvas = createGraphics(width, height);
       
       mouseTarget = createVector(width / 2, height / 2);
       for (let i = 0; i < FISH_COUNT; i++) {
@@ -106,55 +153,115 @@
         fishes.push(new Fish(random(width), random(height), colorType));
       }
       phaseStartTime = millis();
+
+      for (let i = 0; i < 9; i++) {
+        plants.push({ x: width * (i + .5) / 9, h: random(35, 95), phase: random(TWO_PI) });
+      }
+
+      document.getElementById("music-toggle").addEventListener("click", toggleMusic);
+      document.getElementById("fish-count").textContent = `FISH · ${fishes.length}`;
     }
 
     function windowResized() {
       resizeCanvas(windowWidth, windowHeight);
       background(0, 0, 0);
+      trailCanvas = createGraphics(width, height);
+      plants.forEach((p, i) => p.x = width * (i + .5) / plants.length);
     }
 
-    function initAudio() {
+    async function initAudio() {
       if (audioStarted) return;
-      audioStarted = true;
-      const hint = document.getElementById('audio-hint');
-      hint.style.opacity = 0;
-      setTimeout(() => hint.remove(), 1000);
+      if (typeof Tone === "undefined") return;
+      try {
+        await Tone.start(); 
+        if (audioStarted) return;
+        
+        const reverb = new Tone.Reverb({ decay: 8, wet: 0.42 }).toDestination();
+        await reverb.generate();
+        const filter = new Tone.Filter(1800, "lowpass").connect(reverb);
+        
+        padSynth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: "sine" },
+          envelope: { attack: 3.5, decay: 3, sustain: 0.48, release: 7 }
+        }).connect(filter);
+        padSynth.volume.value = -25;
+        padSynth.maxPolyphony = 4;
 
-      Tone.start();
-      padSynth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: "sine" },
-        envelope: { attack: 4, decay: 2, sustain: 1, release: 5 }
-      }).toDestination();
-      padSynth.volume.value = -20; 
-      padSynth.maxPolyphony = 4;
+        pluckSynth = new Tone.Synth({
+          oscillator: { type: "sine" },
+          envelope: { attack: 0.04, decay: 1.6, sustain: 0.03, release: 3.5 }
+        }).connect(reverb);
+        pluckSynth.volume.value = -23;
 
-      const chords = [
-        ["C3", "G3", "E4", "B4"], ["A2", "E3", "C4", "G4"],
-        ["F2", "C3", "A3", "E4"], ["G2", "D3", "B3", "F4"]
-      ];
-      let chordIndex = 0;
-      new Tone.Loop((time) => {
-        padSynth.triggerAttackRelease(chords[chordIndex], "4m", time);
-        chordIndex = (chordIndex + 1) % chords.length;
-      }, "4m").start(0);
-
-      pluckSynth = new Tone.Synth({
-        oscillator: { type: "triangle" },
-        envelope: { attack: 0.01, decay: 0.4, sustain: 0, release: 0.8 } 
-      }).toDestination();
-      const reverb = new Tone.Reverb(5).toDestination();
-      pluckSynth.connect(reverb);
-      pluckSynth.volume.value = -14;
-      Tone.Transport.start();
+        const chords = [
+          ["C3", "G3", "D4", "E4"], ["A2", "E3", "B3", "C4"],
+          ["F2", "C3", "G3", "A3"], ["G2", "D3", "A3", "B3"]
+        ];
+        let chordIndex = 0;
+        new Tone.Loop((time) => {
+          if (musicEnabled && padSynth) {
+            padSynth.triggerAttackRelease(chords[chordIndex], "2m", time, 0.22);
+            chordIndex = (chordIndex + 1) % chords.length;
+          }
+        }, "2m").start(0);
+        
+        Tone.Transport.bpm.value = 54;
+        Tone.Transport.start();
+        audioStarted = true;
+        document.getElementById("audio-hint")?.remove();
+        document.getElementById("music-toggle").textContent = "♫ MUSIC ON";
+      } catch (err) {
+        audioStarted = false;
+      }
     }
+
+    function toggleMusic() {
+      if (!audioStarted) { initAudio(); return; }
+      musicEnabled = !musicEnabled;
+      if (musicEnabled) {
+        Tone.Transport.start();
+        document.getElementById("music-toggle").textContent = "♫ MUSIC ON";
+        showToast("Music flows gently");
+      } else {
+        padSynth?.releaseAll();
+        Tone.Transport.pause();
+        document.getElementById("music-toggle").textContent = "♫ MUSIC OFF";
+        showToast("Quiet moments");
+      }
+    }
+
+    function showToast(message) {
+      const el = document.getElementById("toast");
+      if (!el) return;
+      el.textContent = message;
+      el.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+    }
+
+    function playSoftNote() {
+      if (pluckSynth && musicEnabled) {
+        pluckSynth.triggerAttackRelease(random(PENTATONIC), "2n", Tone.now(), 0.12);
+      }
+    }
+
+    function touchStarted() {
+      initAudio();
+      mouseTarget.set(mouseX, mouseY);
+      for (let i = 0; i < 5 && foods.length < MAX_FOOD; i++) foods.push(new Food(mouseX, mouseY));
+      if (ripples.length < MAX_RIPPLES) ripples.push(new Ripple(mouseX, mouseY));
+      playSoftNote();
+      return false;
+    }
+    function touchMoved() { mouseMoved(); return false; }
 
     function mouseMoved() { 
       mouseTarget.set(mouseX, mouseY); 
       const now = millis();
-      if (audioStarted && now - lastPluckTime > 250) { 
+      if (audioStarted && musicEnabled && now - lastPluckTime > 250) { 
         const note = random(PENTATONIC);
         const vel = map(mouseY, 0, height, 0.1, 0.3);
-        pluckSynth.triggerAttackRelease(note, "16n", Tone.now(), vel);
+        pluckSynth.triggerAttackRelease(note, "16n", Tone.now(), vel * 0.55);
         lastPluckTime = now;
       }
     }
@@ -163,23 +270,20 @@
 
     function mousePressed() {
       initAudio();
-      
       const now = millis();
       if (now - lastClickTime < 200) return false; 
       lastClickTime = now;
 
       if (mouseButton === LEFT) {
-        for (let i = 0; i < 6; i++) {
-          foods.push(new Food(mouseX, mouseY));
-        }
+        for (let i = 0; i < 5 && foods.length < MAX_FOOD; i++) foods.push(new Food(mouseX, mouseY));
+        playSoftNote();
       } else if (mouseButton === RIGHT) {
         scareMode = true; scareTimer = 40;
         for (let f of fishes) {
           const d = p5.Vector.sub(f.pos, createVector(mouseX, mouseY));
-          d.setMag(5); 
-          f.vel.add(d);
+          d.setMag(5); f.vel.add(d);
         }
-        ripples.push(new Ripple(mouseX, mouseY));
+        if (ripples.length < MAX_RIPPLES) ripples.push(new Ripple(mouseX, mouseY));
       }
       return false;
     }
@@ -188,27 +292,16 @@
     class Bubble {
       constructor(x, y) {
         this.pos = createVector(x, y);
-        // ★ 缩小大小：从 3~7 改为 1.5~3.5
         this.size = random(1.5, 3.5); 
         this.life = 255; 
         this.fadeSpeed = random(4, 7); 
       }
-      
-      update() {
-        this.life -= this.fadeSpeed;
-      }
-      
+      update() { this.life -= this.fadeSpeed; }
       display() {
-        push();
-        translate(this.pos.x, this.pos.y);
-        noFill(); 
-        // 亮度保持不变
-        stroke(180, 220, 255, this.life * 0.5); 
-        strokeWeight(1);
-        ellipse(0, 0, this.size);
-        pop();
+        push(); translate(this.pos.x, this.pos.y); noFill(); 
+        stroke(180, 220, 255, this.life * 0.5); strokeWeight(1);
+        ellipse(0, 0, this.size); pop();
       }
-      
       isDead() { return this.life <= 0; }
     }
 
@@ -220,17 +313,12 @@
         this.isEaten = false;
       }
       update() {
-        this.pos.add(this.vel);
-        this.vel.mult(0.99); 
+        this.pos.add(this.vel); this.vel.mult(0.99); 
         if (this.pos.y > height + 20) this.isEaten = true; 
       }
       display() {
-        push();
-        translate(this.pos.x, this.pos.y);
-        noStroke();
-        fill(255, 255, 255, 200); 
-        ellipse(0, 0, this.size); 
-        pop();
+        push(); translate(this.pos.x, this.pos.y); noStroke();
+        fill(255, 255, 255, 200); ellipse(0, 0, this.size); pop();
       }
     }
 
@@ -251,7 +339,6 @@
       getCurrentColor() {
         const now = millis() - phaseStartTime;
         const cycleTime = now % 21000; 
-        
         let c1, c2, t;
         
         if (cycleTime < HOLD_DURATION) {
@@ -270,26 +357,15 @@
           c1 = COLOR_STAGES[2][this.colorType]; c2 = COLOR_STAGES[0][this.colorType];
           t = (cycleTime - (HOLD_DURATION * 3 + TRANSITION_DURATION * 2)) / TRANSITION_DURATION;
         }
-
-        const col1 = color(c1.r, c1.g, c1.b);
-        const col2 = color(c2.r, c2.g, c2.b);
-        return lerpColor(col1, col2, t);
+        return lerpColor(color(c1.r, c1.g, c1.b), color(c2.r, c2.g, c2.b), t);
       }
 
       getTintColor(baseColor, factor) {
-        let r = baseColor.levels[0];
-        let g = baseColor.levels[1];
-        let b = baseColor.levels[2];
-        
+        let r = baseColor.levels[0], g = baseColor.levels[1], b = baseColor.levels[2];
         if (factor < 0) {
-          let f = 1 + factor; 
-          return color(r * f, g * f, b * f);
+          let f = 1 + factor; return color(r * f, g * f, b * f);
         } else {
-          return color(
-            r + (255 - r) * factor,
-            g + (255 - g) * factor,
-            b + (255 - b) * factor
-          );
+          return color(r + (255 - r) * factor, g + (255 - g) * factor, b + (255 - b) * factor);
         }
       }
 
@@ -315,17 +391,12 @@
 
       followTarget() {
         if (scareMode) return;
-        
-        let target = null;
-        let minDist = Infinity;
+        let target = null, minDist = Infinity;
         
         for (let f of foods) {
           if (f.isEaten) continue;
           let d = p5.Vector.dist(this.pos, f.pos);
-          if (d < minDist) {
-            minDist = d;
-            target = f.pos;
-          }
+          if (d < minDist) { minDist = d; target = f.pos; }
         }
 
         if (target !== null && minDist < 600) {
@@ -333,16 +404,14 @@
           if (desired.mag() > 2) {
             desired.setMag(MAX_SPEED * 1.2); 
             const steer = p5.Vector.sub(desired, this.vel);
-            steer.limit(MAX_FORCE * 1.5);
-            this.acc.add(steer);
+            steer.limit(MAX_FORCE * 1.5); this.acc.add(steer);
           }
         } else {
           const desired = p5.Vector.sub(mouseTarget, this.pos);
           if (desired.mag() > 5) {
             desired.setMag(MAX_SPEED);
             const steer = p5.Vector.sub(desired, this.vel);
-            steer.limit(MAX_FORCE * 1.2);
-            this.acc.add(steer);
+            steer.limit(MAX_FORCE * 1.2); this.acc.add(steer);
           }
         }
       }
@@ -359,80 +428,53 @@
         if (speed > 1.5 && random() < 0.02) { 
           let tailX = this.pos.x - cos(this.vel.heading()) * this.size * 0.8;
           let tailY = this.pos.y - sin(this.vel.heading()) * this.size * 0.8;
-          bubbles.push(new Bubble(tailX, tailY));
+          if (bubbles.length < MAX_BUBBLES) bubbles.push(new Bubble(tailX, tailY));
         }
       }
 
-      display() {
+      display(targetCanvas) {
         const baseC = this.getCurrentColor();
         const cHead = this.getTintColor(baseC, -0.4);
         const cTail = this.getTintColor(baseC, 0.4);
         
-        push();
-        translate(this.pos.x, this.pos.y);
-        rotate(this.vel.heading());
-        noStroke();
+        targetCanvas.push(); 
+        targetCanvas.translate(this.pos.x, this.pos.y); 
+        targetCanvas.rotate(this.vel.heading()); 
+        targetCanvas.noStroke();
         
-        let glowR = baseC.levels[0];
-        let glowG = baseC.levels[1];
-        let glowB = baseC.levels[2];
+        let glowR = baseC.levels[0], glowG = baseC.levels[1], glowB = baseC.levels[2];
+        targetCanvas.fill(glowR, glowG, glowB, 3);  targetCanvas.ellipse(0, 0, this.size * 3.5, this.size * 1.2);
+        targetCanvas.fill(glowR, glowG, glowB, 4);  targetCanvas.ellipse(0, 0, this.size * 2.8, this.size * 0.9);
+        targetCanvas.fill(glowR, glowG, glowB, 5);  targetCanvas.ellipse(0, 0, this.size * 2.2, this.size * 0.7);
+        targetCanvas.fill(glowR, glowG, glowB, 7);  targetCanvas.ellipse(0, 0, this.size * 1.6, this.size * 0.5);
+        targetCanvas.fill(glowR, glowG, glowB, 10); targetCanvas.ellipse(0, 0, this.size * 1.1, this.size * 0.3);
         
-        fill(glowR, glowG, glowB, 3);  ellipse(0, 0, this.size * 3.5, this.size * 1.2);
-        fill(glowR, glowG, glowB, 4);  ellipse(0, 0, this.size * 2.8, this.size * 0.9);
-        fill(glowR, glowG, glowB, 5);  ellipse(0, 0, this.size * 2.2, this.size * 0.7);
-        fill(glowR, glowG, glowB, 7);  ellipse(0, 0, this.size * 1.6, this.size * 0.5);
-        fill(glowR, glowG, glowB, 10); ellipse(0, 0, this.size * 1.1, this.size * 0.3);
-        
-        push();
+        targetCanvas.push();
         let steps = 15;
         for(let i=0; i<steps; i++) {
-          let t1 = i / steps;
-          let t2 = (i + 1) / steps;
-          
+          let t1 = i / steps, t2 = (i + 1) / steps;
           let x1 = map(t1, 0, 1, this.size * 1.3, -this.size * 0.9);
           let x2 = map(t2, 0, 1, this.size * 1.3, -this.size * 0.9);
-          
           let y1 = sin(t1 * PI) * this.size * 0.25; 
           let y2 = sin(t2 * PI) * this.size * 0.25; 
-          
           let c1 = lerpColor(cHead, cTail, t1);
           let c2 = lerpColor(cHead, cTail, t2);
-          
-          fill(c1); quad(x1, 0, x1, -y1, x2, -y2, x2, 0);
-          fill(c2); quad(x1, 0, x2, 0, x2, y2, x1, y1);
+          targetCanvas.fill(c1); targetCanvas.quad(x1, 0, x1, -y1, x2, -y2, x2, 0);
+          targetCanvas.fill(c2); targetCanvas.quad(x1, 0, x2, 0, x2, y2, x1, y1);
         }
-        pop();
+        targetCanvas.pop();
         
-        push();
-        translate(-this.size * 0.1, -this.size * 0.15); rotate(sin(this.wigglePhase) * 0.15);
-        fill(cHead);
-        beginShape(); 
-        vertex(0, 0); 
-        vertex(-this.size * 0.5, -this.size * 0.4); 
-        vertex(-this.size * 0.2, -this.size * 0.05); 
-        endShape(CLOSE);
-        pop();
+        targetCanvas.push(); targetCanvas.translate(-this.size * 0.1, -this.size * 0.15); targetCanvas.rotate(sin(this.wigglePhase) * 0.15);
+        targetCanvas.fill(cHead); targetCanvas.beginShape(); targetCanvas.vertex(0, 0); targetCanvas.vertex(-this.size * 0.5, -this.size * 0.4); targetCanvas.vertex(-this.size * 0.2, -this.size * 0.05); targetCanvas.endShape(CLOSE); targetCanvas.pop();
         
-        push();
-        translate(-this.size * 0.85, 0); rotate(sin(this.tailPhase) * 0.6);
-        fill(cTail);
-        beginShape(); 
-        vertex(0, 0); 
-        vertex(-this.size * 1.0, -this.size * 0.6); 
-        vertex(-this.size * 0.6, 0); 
-        vertex(-this.size * 1.0, this.size * 0.6); 
-        endShape(CLOSE);
-        pop();
+        targetCanvas.push(); targetCanvas.translate(-this.size * 0.85, 0); targetCanvas.rotate(sin(this.tailPhase) * 0.6);
+        targetCanvas.fill(cTail); targetCanvas.beginShape(); targetCanvas.vertex(0, 0); targetCanvas.vertex(-this.size * 1.0, -this.size * 0.6); targetCanvas.vertex(-this.size * 0.6, 0); targetCanvas.vertex(-this.size * 1.0, this.size * 0.6); targetCanvas.endShape(CLOSE); targetCanvas.pop();
         
-        push();
-        translate(this.size * 0.2, this.size * 0.15); rotate(sin(this.wigglePhase) * 0.3);
-        fill(cHead);
-        triangle(0, 0, -this.size * 0.4, this.size * 0.35, this.size * 0.1, this.size * 0.1);
-        pop();
+        targetCanvas.push(); targetCanvas.translate(this.size * 0.2, this.size * 0.15); targetCanvas.rotate(sin(this.wigglePhase) * 0.3);
+        targetCanvas.fill(cHead); targetCanvas.triangle(0, 0, -this.size * 0.4, this.size * 0.35, this.size * 0.1, this.size * 0.1); targetCanvas.pop();
         
-        fill(255, 255, 255, 90); 
-        ellipse(this.size * 0.8, -this.size * 0.05, 2.5, 2.5);
-        pop();
+        targetCanvas.fill(255, 255, 255, 90); targetCanvas.ellipse(this.size * 0.8, -this.size * 0.05, 2.5, 2.5);
+        targetCanvas.pop();
       }
     }
 
@@ -443,58 +485,86 @@
         this.life = 100; this.speed = 1.8;
       }
       update() { this.radius += this.speed; this.life -= 100 / (this.maxRadius / this.speed); }
-      display() {
+      display(targetCanvas) {
         const alpha = map(this.life, 0, 100, 0, 80); 
-        noFill(); 
-        stroke(255, 255, 255, alpha); strokeWeight(1.2); ellipse(this.pos.x, this.pos.y, this.radius * 2);
-        stroke(255, 255, 255, alpha * 0.4); strokeWeight(0.8); ellipse(this.pos.x, this.pos.y, this.radius * 1.85);
+        targetCanvas.noFill(); 
+        targetCanvas.stroke(255, 255, 255, alpha); targetCanvas.strokeWeight(1.2); targetCanvas.ellipse(this.pos.x, this.pos.y, this.radius * 2);
+        targetCanvas.stroke(255, 255, 255, alpha * 0.4); targetCanvas.strokeWeight(0.8); targetCanvas.ellipse(this.pos.x, this.pos.y, this.radius * 1.85);
       }
       isDead() { return this.life <= 0; }
     }
 
     function draw() {
-      noStroke();
-      fill(0, 0, 0, 25); 
-      rect(0, 0, width, height);
+      // 1. 在主画布刷纯黑底色
+      background(0, 0, 0);
+
+      // 2. 拖影逻辑：在 trailCanvas 上铺极淡的黑色，让旧画面消退
+      trailCanvas.noStroke();
+      trailCanvas.fill(0, 0, 0, 25);
+      trailCanvas.rect(0, 0, width, height);
 
       if (scareMode) { scareTimer--; if (scareTimer <= 0) scareMode = false; }
 
-      for (let f of fishes) { f.flock(fishes); f.followTarget(); f.update(); f.display(); }
-
+      // 3. 把鱼和气泡画到 trailCanvas 上
+      for (let f of fishes) { 
+        f.flock(fishes); 
+        f.followTarget(); 
+        f.update(); 
+        f.display(trailCanvas); 
+      }
+      
       for (let i = foods.length - 1; i >= 0; i--) {
         let f = foods[i];
         f.update();
-        
         for (let fish of fishes) {
-          if (p5.Vector.dist(fish.pos, f.pos) < fish.size * 0.8) {
-            f.isEaten = true;
-            break;
-          }
+          if (p5.Vector.dist(fish.pos, f.pos) < fish.size * 0.8) { f.isEaten = true; break; }
         }
-        
-        if (f.isEaten) {
-          foods.splice(i, 1);
-        } else {
-          f.display(); 
+        if (f.isEaten) foods.splice(i, 1);
+        else {
+          trailCanvas.push(); trailCanvas.translate(f.pos.x, f.pos.y); trailCanvas.noStroke();
+          trailCanvas.fill(255, 255, 255, 200); trailCanvas.ellipse(0, 0, f.size); trailCanvas.pop();
         }
       }
 
       for (let i = bubbles.length - 1; i >= 0; i--) {
         let b = bubbles[i];
-        b.update();
-        b.display();
-        if (b.isDead()) {
-          bubbles.splice(i, 1);
-        }
+        b.update(); 
+        trailCanvas.push(); trailCanvas.translate(b.pos.x, b.pos.y); trailCanvas.noFill(); 
+        trailCanvas.stroke(180, 220, 255, b.life * 0.5); trailCanvas.strokeWeight(1);
+        trailCanvas.ellipse(0, 0, b.size); trailCanvas.pop();
+        if (b.isDead()) bubbles.splice(i, 1);
       }
 
       for (let i = ripples.length - 1; i >= 0; i--) {
-        const r = ripples[i]; r.update(); r.display();
+        const r = ripples[i]; r.update(); r.display(trailCanvas);
         if (r.isDead()) ripples.splice(i, 1);
       }
 
-      noFill(); stroke(255, 255, 255, 30); strokeWeight(1);
-      ellipse(mouseX, mouseY, 60 + sin(frameCount * 0.05) * 10);
+      // 4. 把积攒好拖影的 trailCanvas 贴到主画布上
+      image(trailCanvas, 0, 0);
+
+      // 5. 在主画布上干净地画水草，这样水草绝对不会有残影
+      for (const p of plants) {
+        const sway = sin(frameCount * 0.018 + p.phase) * 12;
+        stroke(66, 168, 157, 95);
+        strokeWeight(2); noFill();
+        beginShape(); 
+        curveVertex(p.x, height + 10); curveVertex(p.x, height + 10);
+        curveVertex(p.x + sway * .35, height - p.h * .5); curveVertex(p.x + sway, height - p.h);
+        curveVertex(p.x + sway, height - p.h); 
+        endShape();
+        
+        noStroke(); fill(83, 183, 169, 48);
+        ellipse(p.x + sway * .55, height - p.h * .58, 10, 25);
+      }
+
+      // 6. 画鼠标光晕
+      noFill(); stroke(190, 235, 255, 34); strokeWeight(1);
+      ellipse(mouseX, mouseY, 48 + sin(frameCount * 0.045) * 9);
+      
+      if (frameCount % 90 === 0) {
+        document.getElementById("fish-count").textContent = `FISH · ${fishes.length}`;
+      }
     }
   </script>
 </body>
