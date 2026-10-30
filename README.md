@@ -7,14 +7,14 @@ An interactive, generative digital aquarium where users can guide a flock of glo
 *(Best experienced on a desktop browser with a mouse and audio enabled)*
 
 ## 🎯 Intended User & Idea
-This project is designed for anyone looking for a quick, meditative visual break. The idea was to create a "digital pet" experience that feels organic and responsive, rather than a traditional game with winning or losing conditions. The user acts as a caretaker, interacting with a school of digital fish.
+This project is designed for anyone looking for a quick, meditative visual break. The idea was to create a "digital pet" experience that feels organic and responsive, rather than a traditional game with winning or losing conditions. The user acts as a caretaker, interacting with a school of digital fish in a calming underwater environment.
 
 ## 🖱️ Main Interaction
 The program responds to both mouse movement and clicks, providing immediate visual and auditory feedback:
 - **Move Mouse**: The fish flock smoothly follows the cursor, creating a fluid, organic movement across the screen.
 - **Left Click (Feed)**: Drops white food pellets into the tank. The fish will abandon the cursor and race to eat the food. 
 - **Right Click (Scatter)**: Creates a water ripple effect and scares the fish away from the click location.
-- **Audio Activation**: Modern browsers block autoplay. Click anywhere to activate the healing ambient background music.
+- **Audio Activation**: Modern browsers block autoplay. Click anywhere to activate the healing ambient background music and interactive water drop sounds. You can also toggle the music on/off via the top-right UI button.
 
 ## ✨ Design & Technical Details
 - **Flocking Algorithm**: Built using the Boids algorithm (Separation, Alignment, Cohesion) to simulate realistic schooling behavior.
@@ -22,8 +22,9 @@ The program responds to both mouse movement and clicks, providing immediate visu
   - Fish have a streamlined body with a head-to-tail gradient.
   - The entire school smoothly transitions between three custom color palettes (21-second loop) using RGB linear interpolation.
   - Fish leave subtle, fading hollow bubble trails as they swim.
+- **Atmospheric Elements**: Added swaying aquatic plants at the bottom (rendered via off-screen canvas caching for performance) to create a richer underwater environment.
 - **Audio Integration**: Uses Tone.js to generate a continuous, healing ambient chord progression (Cmaj7 - Am7 - Fmaj7 - G7) upon user interaction.
-- **Performance & Errors**: Implemented `frameRate(60)` lock, audio polyphony limits, and click debouncing to prevent browser crashes during rapid interactions.
+- **Performance & Errors**: Implemented `frameRate(60)` lock, audio polyphony limits, off-screen canvas rendering for plants, and click debouncing to prevent browser crashes during rapid interactions.
 
 ## 🚀 How to Run Locally
 This is a pure front-end project. No build tools are required.
@@ -38,6 +39,3 @@ This is a pure front-end project. No build tools are required.
 ## 🛠️ Built With
 - [p5.js](https://p5js.org/) - Canvas rendering and interaction
 - [Tone.js](https://tonejs.github.io/) - Web Audio synthesis
-
----
-*Created for Assignment 3: An Interactive Experience.*
