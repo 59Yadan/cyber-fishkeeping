@@ -6,6 +6,9 @@ An interactive, generative digital aquarium where users can guide a flock of glo
 👉 **[Play Cyber Fishkeeping Here](https://59yadan.github.io/cyber-fishkeeping/)**
 *(Best experienced on a desktop browser with a mouse and audio enabled)*
 
+## 📸 Screenshot
+![Cyber Fishkeeping](screenshot.png)
+
 ## 🎯 Intended User & Idea
 This project is designed for anyone looking for a quick, meditative visual break. The idea was to create a "digital pet" experience that feels organic and responsive, rather than a traditional game with winning or losing conditions. The user acts as a caretaker, interacting with a school of digital fish in a calming underwater environment.
 
@@ -40,5 +43,6 @@ This is a pure front-end project. No build tools are required.
 - [p5.js](https://p5js.org/) - Canvas rendering and interaction
 - [Tone.js](https://tonejs.github.io/) - Web Audio synthesis
 
-## 📸 Screenshot
-![Cyber Fishkeeping](screenshot.png)
+## 📝 Credits
+- Built using [p5.js](https://p5js.org/) for Canvas rendering and [Tone.js](https://tonejs.github.io/) for Web Audio synthesis.
+- AI tools (DeepSeek) were used to assist with code generation and debugging.
