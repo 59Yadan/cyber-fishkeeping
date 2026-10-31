@@ -39,3 +39,6 @@ This is a pure front-end project. No build tools are required.
 ## 🛠️ Built With
 - [p5.js](https://p5js.org/) - Canvas rendering and interaction
 - [Tone.js](https://tonejs.github.io/) - Web Audio synthesis
+
+## 📸 Screenshot
+![Cyber Fishkeeping](screenshot.png)
